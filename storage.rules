@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Auth Validation Helper
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Admin Validation Helper (Reads from Firestore)
+    function isAdmin() {
+      return isAuthenticated() && 
+             firestore.exists(/databases/(default)/documents/users/$(request.auth.uid)) &&
+             firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data.role == 'superadmin';
+    }
+
+    // Role Validator helpers
+    function getUserData() {
+      return firestore.get(/databases/(default)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isPrivileged(companyId) {
+       let user = getUserData();
+       return (user.role == 'rh' || user.role == 'medico' || user.role == 'admin') && user.companyId == companyId;
+    }
+
+    match /certificates/{companyId}/{date}/{userId}/{fileName} {
+      // Create: Users can upload to their own path with valid image/pdf formats (max 10MB)
+      allow create: if isAuthenticated() &&
+                    request.auth.uid == userId &&
+                    request.resource.size < 10 * 1024 * 1024 &&
+                    (request.resource.contentType.matches('image/.*') || request.resource.contentType.matches('application/pdf'));
+                    
+      // Read: Owner can read. HR/Medic/Admin of the same company can read. Superadmin can read all.
+      allow read: if isAuthenticated() && (
+                    request.auth.uid == userId ||
+                    isPrivileged(companyId) ||
+                    isAdmin()
+                  );
+                  
+      // Only Admins can delete
+      allow delete: if isAdmin();
+    }
+  }
+}

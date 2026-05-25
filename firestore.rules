@@ -1,0 +1,198 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required)
+    //   - name: string (required)
+    //   - email: string (required)
+    //   - role: string (required, enum: ['superadmin', 'admin', 'rh', 'medico', 'colaborador'])
+    //   - matricula: string (optional)
+    //   - setor: string (optional)
+    //   - cargo: string (optional)
+    //   - createdAt: timestamp (required)
+    //
+    // Collection: certificates
+    // Document ID: {certificateId}
+    // Fields:
+    //   - id: string
+    //   - colaboradorUid: string (required)
+    //   - colaboradorName: string
+    //   - dataEmissao: string
+    //   - dataInicioAfastamento: string
+    //   - quantidadeDias: number
+    //   - cid: string
+    //   - medicoNome: string
+    //   - medicoCRM: string
+    //   - instituicao: string
+    //   - horarioInicio: string
+    //   - horarioFim: string
+    //   - tipoDocumento: string
+    //   - status: string (required)
+    //   - imageUrl: string
+    //   - ocrRawText: string
+    //   - popRegrasAplicadas: list
+    //   - observacoesMedicas: string
+    //   - createdAt: timestamp (required)
+    //   - updatedAt: timestamp
+    //
+    // Collection: auditLogs
+    // Document ID: {logId}
+    // Fields:
+    //   - id: string
+    //   - certificateId: string (required)
+    //   - action: string (required)
+    //   - performedByUid: string (required)
+    //   - performedByName: string
+    //   - details: string
+    //   - createdAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (getUserData().role == 'admin' || getUserData().role == 'superadmin')) ||
+        (request.auth.token.email == "xellfernandes@gmail.com" && request.auth.token.email_verified == true)
+      );
+    }
+
+    function isRH() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'rh';
+    }
+
+    function isMedico() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().role == 'medico';
+    }
+
+    function isPrivileged() {
+      return isAdmin() || isRH() || isMedico();
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidCpfFormat(cpf) {
+      return cpf is string && (cpf.matches("^\\d{11}$") || cpf.matches("^\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}$"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasRequiredFields(['uid', 'name', 'email', 'role', 'createdAt']) &&
+             data.uid is string &&
+             data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.role in ['superadmin', 'admin', 'rh', 'medico', 'colaborador'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidCertificate(data) {
+      return hasRequiredFields(['colaboradorUid', 'status', 'createdAt']) &&
+             data.colaboradorUid is string &&
+             isValidCpfFormat(data.colaboradorUid) &&
+             data.status in ["pendente_ocr", "pendente_validacao", "aceito", "aceito_com_pendencia", "revisao_medica", "encaminhado_rh", "rejeitado"] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidAuditLog(data) {
+      return hasRequiredFields(['certificateId', 'action', 'performedByUid', 'createdAt']) &&
+             data.certificateId is string &&
+             data.action is string && data.action.size() < 200 &&
+             data.performedByUid is string &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /companies/{companyId} {
+      // Superadmins can read all companies. Users can read their own company.
+      allow read: if isAuthenticated() && (
+        isAdmin() || (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && getUserData().companyId == companyId)
+      );
+      
+      // Only superadmins can create/update/delete companies.
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /users/{userId} {
+      // Users can read their own profile. Privileged users can read all profiles.
+      allow read: if isOwner(userId) || isPrivileged();
+      
+      // Users can create their profile. Only admins can create admin/rh/medico roles.
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == 'colaborador' && request.resource.data.uid == request.auth.uid) ||
+        isAdmin()
+      );
+
+      // Users can update their profile. Only admins can change roles.
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (
+        (isOwner(userId) && request.resource.data.role == resource.data.role && request.resource.data.uid == resource.data.uid) ||
+        isAdmin()
+      );
+    }
+
+    match /certificates/{certificateId} {
+      // Collaborators can read their own certificates. Privileged users can read all.
+      allow read: if isAuthenticated() && (
+        resource.data.colaboradorUid == request.auth.uid || isPrivileged()
+      );
+
+      // Collaborators can create certificates for themselves.
+      allow create: if isAuthenticated() && isValidCertificate(request.resource.data) && (
+        request.resource.data.colaboradorUid == request.auth.uid || isPrivileged()
+      );
+
+      // Collaborators can update their certificates only if pending. Privileged users can update any.
+      allow update: if isAuthenticated() && isValidCertificate(request.resource.data) && (
+        (resource.data.colaboradorUid == request.auth.uid && resource.data.status == 'pendente_ocr') ||
+        isPrivileged()
+      );
+      
+      allow delete: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      // Privileged users can read audit logs.
+      allow read: if isPrivileged();
+      
+      // Anyone authenticated can create an audit log (system driven).
+      allow create: if isAuthenticated() && isValidAuditLog(request.resource.data) && 
+                    request.resource.data.performedByUid == request.auth.uid;
+                    
+      // Audit logs are immutable.
+      allow update, delete: if false;
+    }
+  }
+}

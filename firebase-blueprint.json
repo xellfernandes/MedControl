@@ -1,0 +1,78 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "A user of the system (Colaborador, RH, Médico)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "rh", "medico", "colaborador"] },
+        "matricula": { "type": "string" },
+        "setor": { "type": "string" },
+        "cargo": { "type": "string" },
+        "pushToken": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "name", "email", "role"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Medical certificate submitted by a collaborator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "colaboradorUid": { "type": "string" },
+        "colaboradorName": { "type": "string" },
+        "dataEmissao": { "type": "string", "format": "date-time" },
+        "dataInicioAfastamento": { "type": "string", "format": "date-time" },
+        "quantidadeDias": { "type": "number" },
+        "cid": { "type": "string" },
+        "medicoNome": { "type": "string" },
+        "medicoCRM": { "type": "string" },
+        "instituicao": { "type": "string" },
+        "horarioInicio": { "type": "string" },
+        "horarioFim": { "type": "string" },
+        "tipoDocumento": { "type": "string", "enum": ["atestado", "comparecimento", "exame", "receita", "laudo", "encaminhamento", "outro"] },
+        "status": { "type": "string", "enum": ["pendente_ocr", "pendente_validacao", "aceito", "aceito_com_pendencia", "revisao_medica", "encaminhado_rh", "rejeitado"] },
+        "imageUrl": { "type": "string" },
+        "ocrRawText": { "type": "string" },
+        "popRegrasAplicadas": { "type": "array", "items": { "type": "string" } },
+        "observacoesMedicas": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["colaboradorUid", "status", "createdAt"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Log of actions performed on certificates",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "certificateId": { "type": "string" },
+        "action": { "type": "string" },
+        "performedByUid": { "type": "string" },
+        "performedByName": { "type": "string" },
+        "details": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["certificateId", "action", "performedByUid", "createdAt"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "certificates/{certificateId}": {
+      "schema": { "$ref": "#/entities/Certificate" },
+      "description": "Medical certificates"
+    },
+    "auditLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Audit logs for certificate actions"
+    }
+  }
+}
